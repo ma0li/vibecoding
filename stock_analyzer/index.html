@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Pump Analyzer</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="css/style.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="container mx-auto p-4">
+        <header class="bg-blue-600 text-white p-4 rounded-md mb-6">
+            <h1 class="text-3xl font-bold text-center">Stock Pump Analyzer</h1>
+        </header>
+
+        <section id="input-section" class="mb-6 p-6 bg-white rounded-lg shadow-md">
+            <h2 class="text-2xl font-semibold mb-4 text-gray-700">Analysis Configuration</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label for="apiKey" class="block text-sm font-medium text-gray-700 mb-1">Alpha Vantage API Key:</label>
+                    <input type="text" id="apiKey" name="apiKey" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" value="84YKXPO71P1TEFNO">
+                </div>
+                <div>
+                    <label for="stockSymbols" class="block text-sm font-medium text-gray-700 mb-1">Stock Symbols (comma-separated):</label>
+                    <input type="text" id="stockSymbols" name="stockSymbols" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="e.g., AAPL,MSFT,GOOG">
+                </div>
+                <div>
+                    <label for="pumpThreshold" class="block text-sm font-medium text-gray-700 mb-1">Pump Threshold (%):</label>
+                    <input type="number" id="pumpThreshold" name="pumpThreshold" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" value="30">
+                </div>
+                <div>
+                    <label for="timeWindow" class="block text-sm font-medium text-gray-700 mb-1">Time Window:</label>
+                    <select id="timeWindow" name="timeWindow" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                        <option value="daily" selected>Daily</option>
+                        <option value="weekly">Weekly</option>
+                    </select>
+                </div>
+            </div>
+            <div class="mt-6 text-center">
+                <button id="startAnalysisBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    Start Analysis
+                </button>
+            </div>
+        </section>
+
+        <section id="loading-indicator" class="hidden mb-6 p-4 text-center">
+            <p class="text-lg text-gray-700">Loading data and analyzing... Please wait.</p>
+            <!-- You can add a spinner or a more complex loading animation here -->
+        </section>
+
+        <section id="error-message" class="hidden mb-6 p-4 bg-red-100 text-red-700 border border-red-400 rounded-md">
+            <h3 class="font-bold">Error!</h3>
+            <p id="errorText"></p>
+        </section>
+
+        <section id="results-section" class="p-6 bg-white rounded-lg shadow-md">
+            <h2 class="text-2xl font-semibold mb-4 text-gray-700">Analysis Results</h2>
+            <div id="resultsOutput" class="space-y-4">
+                <!-- Results will be dynamically inserted here by JavaScript -->
+                <p class="text-gray-500">Results will appear here once the analysis is complete.</p>
+            </div>
+        </section>
+
+        <footer class="mt-8 text-center text-sm text-gray-500">
+            <p>Stock Pump Analyzer - Powered by Alpha Vantage</p>
+        </footer>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
