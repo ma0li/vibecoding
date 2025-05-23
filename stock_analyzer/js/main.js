@@ -9,6 +9,10 @@ const loadingIndicator = document.getElementById('loading-indicator');
 const errorMessageDiv = document.getElementById('error-message');
 const errorText = document.getElementById('errorText');
 
+if (apiKeyInput) {
+    apiKeyInput.value = 'lkEqy8gau18rNXqJ8sLhKIYw1mCMRNcw';
+}
+
 // FMP uses direct field names: date, open, high, low, close, adjClose, volume.
 
 /**
@@ -84,7 +88,7 @@ async function findPumpedStocks(stockSymbols, apiKey, threshold, timeWindow) {
                             pumpPercentage: pumpPercentage,
                             timeWindow: 'daily',
                             dailyData: dailyData, 
-                            historicalDataArray: historicalData // Add FMP array (oldest first)
+                            historicalDataArray: historicalData 
                         });
                     }
                 }
@@ -138,7 +142,7 @@ async function findPumpedStocks(stockSymbols, apiKey, threshold, timeWindow) {
                             pumpPercentage: pumpPercentage,
                             timeWindow: 'weekly',
                             dailyData: dailyData,
-                            historicalDataArray: historicalData // Add FMP array (oldest first)
+                            historicalDataArray: historicalData 
                         });
                     }
                 }
@@ -159,93 +163,267 @@ async function findPumpedStocks(stockSymbols, apiKey, threshold, timeWindow) {
     return pumpedStocks;
 }
 
+// --- Technical Indicator Helper Functions ---
+
+/**
+ * Calculates the Simple Moving Average (SMA).
+ * @param {number[]} dataArray Array of numbers (e.g., closing prices).
+ * @param {number} period The SMA period (e.g., 20 for 20-day SMA).
+ * @returns {Array<number|null>} Array of SMA values, padded with nulls at the start.
+ */
+function calculateMovingAverage(dataArray, period) {
+    if (!dataArray || dataArray.length < period) {
+        return new Array(dataArray ? dataArray.length : 0).fill(null);
+    }
+    const sma = [];
+    for (let i = 0; i < dataArray.length - period + 1; i++) {
+        const sum = dataArray.slice(i, i + period).reduce((acc, val) => acc + val, 0);
+        sma.push(sum / period);
+    }
+    const padding = new Array(period - 1).fill(null);
+    return padding.concat(sma);
+}
+
+
+/**
+ * Calculates the standard deviation of a series of numbers.
+ * @param {number[]} numbersArray Array of numbers.
+ * @returns {number|null} The standard deviation, or null if not enough data.
+ */
+function calculateStandardDeviation(numbersArray) {
+    if (!numbersArray || numbersArray.length < 2) { 
+        return null; 
+    }
+    const n = numbersArray.length;
+    const mean = numbersArray.reduce((acc, val) => acc + val, 0) / n;
+    const variance = numbersArray.reduce((acc, val) => acc + (val - mean) ** 2, 0) / (n - 1); // Sample variance
+    return Math.sqrt(variance);
+}
+
+/**
+ * Calculates the Relative Strength Index (RSI).
+ * @param {number[]} prices Array of closing prices.
+ * @param {number} [period=14] The RSI period.
+ * @returns {Array<number|null>} Array of RSI values, aligned with input prices (leading nulls).
+ */
+function calculateRSI(prices, period = 14) {
+    if (!prices || prices.length < period + 1) { 
+        return new Array(prices ? prices.length : 0).fill(null);
+    }
+
+    const rsiValues = new Array(prices.length).fill(null);
+    let avgGain = 0;
+    let avgLoss = 0;
+
+    // Calculate initial average gain and loss
+    for (let i = 1; i <= period; i++) {
+        const change = prices[i] - prices[i-1];
+        if (change > 0) {
+            avgGain += change;
+        } else {
+            avgLoss -= change; // avgLoss is positive
+        }
+    }
+    avgGain /= period;
+    avgLoss /= period;
+
+    // First RSI value
+    if (avgLoss === 0) {
+        rsiValues[period] = 100;
+    } else {
+        const rs = avgGain / avgLoss;
+        rsiValues[period] = 100 - (100 / (1 + rs));
+    }
+    
+    // Subsequent RSI values using Wilder's smoothing
+    for (let i = period + 1; i < prices.length; i++) {
+        const change = prices[i] - prices[i-1];
+        let gain = 0;
+        let loss = 0;
+        if (change > 0) {
+            gain = change;
+        } else {
+            loss = -change;
+        }
+
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+
+        if (avgLoss === 0) {
+            rsiValues[i] = 100;
+        } else {
+            const rs = avgGain / avgLoss;
+            rsiValues[i] = 100 - (100 / (1 + rs));
+        }
+    }
+    return rsiValues; 
+}
+
 /**
  * Analyzes the stock's performance after a detected pump.
  * @param {Object} pumpInfo Information about the pump.
  * @returns {Object} Analysis of post-pump trends.
  */
 function analyzePostPumpTrend(pumpInfo) {
-    const { symbol, date: pumpDateStr, dailyData } = pumpInfo; // dailyData is the map
+    const { symbol, date: pumpDateStr, dailyData, historicalDataArray } = pumpInfo; 
+    
     const trends = {
-        nextDay: { changePercent: null, high: null, low: null, details: "Data unavailable" },
-        nextWeek: { changePercent: null, high: null, low: null, details: "Data unavailable" },
-        nextMonth: { changePercent: null, high: null, low: null, details: "Data unavailable" }
+        nextDay: { changePercent: null, high: null, low: null, details: "Data unavailable", volatility: null, rsi: null, maCrossover: { status: "N/A", shortMA: null, longMA: null } },
+        nextWeek: { changePercent: null, high: null, low: null, details: "Data unavailable", volatility: null, rsi: null, maCrossover: { status: "N/A", shortMA: null, longMA: null } },
+        nextMonth: { changePercent: null, high: null, low: null, details: "Data unavailable", volatility: null, rsi: null, maCrossover: { status: "N/A", shortMA: null, longMA: null } }
     };
 
-    if (!dailyData || Object.keys(dailyData).length === 0) {
-        console.error(`No dailyData provided (map) for trend analysis of ${symbol} on ${pumpDateStr}`);
+    if (!historicalDataArray || historicalDataArray.length === 0) {
+        console.error(`No historicalDataArray provided for trend analysis of ${symbol} on ${pumpDateStr}`);
         return trends;
     }
 
-    const sortedDates = Object.keys(dailyData).sort((a, b) => new Date(a) - new Date(b));
-    const pumpDateIndex = sortedDates.indexOf(pumpDateStr);
+    const pumpDateIndexInArray = historicalDataArray.findIndex(item => item.date === pumpDateStr);
 
-    if (pumpDateIndex === -1) {
-        console.error(`Pump date ${pumpDateStr} not found in sorted daily data keys for ${symbol}.`);
+    if (pumpDateIndexInArray === -1) {
+        console.error(`Pump date ${pumpDateStr} not found in historicalDataArray for ${symbol}.`);
         return trends;
     }
 
-    const pumpDayData = dailyData[pumpDateStr];
-    if (!pumpDayData) {
-        console.error(`Pump day data for ${pumpDateStr} is undefined for ${symbol}.`);
+    const pumpDayObject = historicalDataArray[pumpDateIndexInArray];
+    const pumpDayReferencePrice = parseFloat(pumpDayObject.adjClose !== undefined ? pumpDayObject.adjClose : pumpDayObject.close);
+    if (isNaN(pumpDayReferencePrice)) {
+        console.error(`Invalid reference price for pump on ${pumpDateStr} for ${symbol}.`);
         return trends;
+    }
+
+    function getClosingPricesForPeriod(startIndex, numDays) {
+        const prices = [];
+        for (let i = 0; i < numDays; i++) {
+            const currentIndex = startIndex + i;
+            if (currentIndex < historicalDataArray.length) {
+                const day = historicalDataArray[currentIndex];
+                prices.push(parseFloat(day.adjClose !== undefined ? day.adjClose : day.close));
+            } else {
+                break; 
+            }
+        }
+        return prices;
     }
     
-    const pumpDayReferencePrice = parseFloat(pumpDayData.adjustedClose); 
-    if (isNaN(pumpDayReferencePrice)) {
-        console.error(`Invalid reference price (adjustedClose) for pump on ${pumpDateStr} for ${symbol}. Value: ${pumpDayData.adjustedClose}`);
-        return trends;
+    function getDailyReturnsForPeriod(startIndex, numDaysInPeriod) {
+        const returns = [];
+        const prices = getClosingPricesForPeriod(Math.max(0, startIndex -1), numDaysInPeriod + 1);         
+        if (prices.length < 2) return returns; 
+        for (let i = 1; i < prices.length; i++) {
+            if (prices[i-1] !== 0 && !isNaN(prices[i]) && !isNaN(prices[i-1])) {
+                returns.push((prices[i] - prices[i-1]) / prices[i-1]);
+            } else {
+                returns.push(0); 
+            }
+        }
+        return returns;
     }
 
-    function calculateTrendForPeriod(startIndex, numDays) {
-        const periodDates = sortedDates.slice(startIndex, startIndex + numDays);
-        if (periodDates.length === 0) return { changePercent: null, high: null, low: null, details: "Not enough subsequent data" };
+    function analyzePeriod(periodName, postPumpStartIndexInArray, numDaysInAnalysisPeriod) {
+        const periodTrend = { 
+            changePercent: null, high: null, low: null, details: "Not enough subsequent data", 
+            volatility: null, rsi: null, maCrossover: { status: "N/A", shortMA: null, longMA: null }, daysAvailable: 0, endDate: null 
+        };
 
+        const actualDataForPeriod = historicalDataArray.slice(postPumpStartIndexInArray, postPumpStartIndexInArray + numDaysInAnalysisPeriod);
+        if (actualDataForPeriod.length === 0) return periodTrend;
+
+        periodTrend.daysAvailable = actualDataForPeriod.length;
+        periodTrend.endDate = actualDataForPeriod[actualDataForPeriod.length - 1].date;
+        
         let periodHigh = -Infinity;
         let periodLow = Infinity;
-        
-        for (const dateKey of periodDates) {
-            const dayEntry = dailyData[dateKey]; 
-            if (!dayEntry) {
-                console.warn(`Missing data for date ${dateKey} in calculateTrendForPeriod for ${symbol}. Skipping this day.`);
-                continue;
+        actualDataForPeriod.forEach(day => {
+            periodHigh = Math.max(periodHigh, parseFloat(day.high));
+            periodLow = Math.min(periodLow, parseFloat(day.low));
+        });
+        periodTrend.high = periodHigh;
+        periodTrend.low = periodLow;
+
+        const endPriceData = actualDataForPeriod[actualDataForPeriod.length - 1];
+        const endPrice = parseFloat(endPriceData.adjClose !== undefined ? endPriceData.adjClose : endPriceData.close);
+
+        if (!isNaN(endPrice)) {
+            periodTrend.changePercent = (endPrice - pumpDayReferencePrice) / pumpDayReferencePrice;
+            periodTrend.details = `${actualDataForPeriod.length} days of data found, ending ${periodTrend.endDate}.`;
+        } else {
+            periodTrend.details = "End price data missing for period.";
+        }
+
+        if (actualDataForPeriod.length >= 2) { 
+            const dailyReturns = getDailyReturnsForPeriod(postPumpStartIndexInArray, actualDataForPeriod.length);
+            if (dailyReturns.length >= 2) { 
+                 periodTrend.volatility = calculateStandardDeviation(dailyReturns);
+            } else {
+                 periodTrend.volatility = null; 
             }
-            periodHigh = Math.max(periodHigh, parseFloat(dayEntry.high));
-            periodLow = Math.min(periodLow, parseFloat(dayEntry.low));
+        } else {
+            periodTrend.volatility = null; 
+        }
+
+        const rsiLookbackPeriod = 14;
+        const rsiDataEndIndexInHistorical = postPumpStartIndexInArray + actualDataForPeriod.length - 1;
+        const rsiCalculationStartDateIndex = Math.max(0, rsiDataEndIndexInHistorical - rsiLookbackPeriod - 20); 
+        
+        const pricesForRSICalculation = getClosingPricesForPeriod(
+            rsiCalculationStartDateIndex, 
+            (rsiDataEndIndexInHistorical - rsiCalculationStartDateIndex + 1)
+        );
+
+        if (pricesForRSICalculation.length >= rsiLookbackPeriod + 1) {
+            const rsiValues = calculateRSI(pricesForRSICalculation, rsiLookbackPeriod);
+            periodTrend.rsi = rsiValues[rsiValues.length - 1]; 
+        } else {
+            periodTrend.rsi = null;
         }
         
-        const lastDayOfPeriodData = dailyData[periodDates[periodDates.length - 1]];
-        if (!lastDayOfPeriodData) {
-             console.warn(`Missing data for last day of period ${periodDates[periodDates.length - 1]} in calculateTrendForPeriod for ${symbol}.`);
-             return { changePercent: null, high: periodHigh, low: periodLow, details: "End price data missing for period end date" };
-        }
-        const endPrice = parseFloat(lastDayOfPeriodData.adjustedClose);
+        // **Calculate MA Crossovers** 
+        const shortMAPeriod = 10;
+        const longMAPeriod = 20;
+        const maDataNeededForLongest = longMAPeriod; 
+        
+        const currentPeriodEndIndexInHistorical = postPumpStartIndexInArray + actualDataForPeriod.length - 1;
+        
+        const pricesForMAEntireHistoryUpToPeriodEnd = getClosingPricesForPeriod(
+            0, 
+            currentPeriodEndIndexInHistorical + 1 
+        );
 
-        if (isNaN(endPrice)) {
-            return { changePercent: null, high: periodHigh, low: periodLow, details: `End price data (adjustedClose) missing or invalid for ${periodDates[periodDates.length - 1]}` };
+        if (pricesForMAEntireHistoryUpToPeriodEnd.length >= maDataNeededForLongest) {
+            const shortMAValues = calculateMovingAverage(pricesForMAEntireHistoryUpToPeriodEnd, shortMAPeriod);
+            const longMAValues = calculateMovingAverage(pricesForMAEntireHistoryUpToPeriodEnd, longMAPeriod);
+            
+            const lastShortMA = shortMAValues[shortMAValues.length - 1];
+            const lastLongMA = longMAValues[longMAValues.length - 1];
+
+            if (lastShortMA !== null && lastLongMA !== null) {
+                periodTrend.maCrossover = {
+                    shortMA: lastShortMA,
+                    longMA: lastLongMA,
+                    status: lastShortMA > lastLongMA ? "Golden" : (lastShortMA < lastLongMA ? "Death" : "Neutral")
+                };
+            } else {
+                 periodTrend.maCrossover = { status: "Data insufficient", shortMA: null, longMA: null };
+            }
+        } else {
+            periodTrend.maCrossover = { status: "Data insufficient", shortMA: null, longMA: null };
         }
-        const changePercent = ((endPrice - pumpDayReferencePrice) / pumpDayReferencePrice);
-        return { 
-            changePercent: changePercent, 
-            high: periodHigh, 
-            low: periodLow, 
-            daysAvailable: periodDates.length,
-            endDate: periodDates[periodDates.length - 1],
-            details: `${periodDates.length} days of data found.`
-        };
+        
+        return periodTrend;
     }
 
-    if (pumpDateIndex + 1 < sortedDates.length) {
-        trends.nextDay = { ...calculateTrendForPeriod(pumpDateIndex + 1, 1), details: `Data for ${sortedDates[pumpDateIndex + 1]}. ${calculateTrendForPeriod(pumpDateIndex + 1, 1).details}` };
+    const postPumpActualStartIndex = pumpDateIndexInArray + 1;
+
+    if (postPumpActualStartIndex < historicalDataArray.length) {
+        trends.nextDay = analyzePeriod('nextDay', postPumpActualStartIndex, 1);
+        trends.nextWeek = analyzePeriod('nextWeek', postPumpActualStartIndex, 5); 
+        trends.nextMonth = analyzePeriod('nextMonth', postPumpActualStartIndex, 21); 
     }
-    if (pumpDateIndex + 1 < sortedDates.length) {
-        trends.nextWeek = calculateTrendForPeriod(pumpDateIndex + 1, 5);
-    }
-    if (pumpDateIndex + 1 < sortedDates.length) {
-        trends.nextMonth = calculateTrendForPeriod(pumpDateIndex + 1, 21);
-    }
+    
     return trends;
 }
+
 
 // --- UI Update Functions ---
 
@@ -268,19 +446,22 @@ function displayFullResults(analysisResults) {
             pumpDateDisplay = `${result.date} (Week: ${result.actualWeekTradingStartDate} to ${result.actualWeekTradingEndDate})`;
         }
 
-        let innerHTML = `
+        let initialHTML = `
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 pb-2 border-b border-gray-200">
                 <div><h3 class="text-2xl font-bold text-indigo-700">${result.symbol}</h3><p class="text-sm text-gray-500">Pump Detected on: ${pumpDateDisplay}</p></div>
                 <div class="mt-2 md:mt-0 md:text-right"><p class="text-xl font-semibold ${result.pumpPercentage >= 0 ? 'text-green-600' : 'text-red-600'}">${(result.pumpPercentage * 100).toFixed(2)}% ${result.timeWindow === 'daily' ? 'Day' : 'Week'} Pump</p><p class="text-xs text-gray-500">Open: ${result.open.toFixed(2)}, High: ${result.high.toFixed(2)}</p></div>
             </div>
             <h4 class="text-lg font-semibold text-gray-700 mb-3">Post-Pump Trend Analysis:</h4>`;
+        stockCard.innerHTML = initialHTML;
 
+        // Table for Price/High/Low/Details
         const trendsTable = document.createElement('table');
         trendsTable.className = 'min-w-full divide-y divide-gray-200 mb-4';
-        trendsTable.innerHTML = `<thead class="bg-gray-50"><tr><th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period</th><th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">% Change</th><th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">High</th><th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Low</th><th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th></tr></thead><tbody class="bg-white divide-y divide-gray-200"></tbody>`;
+        let trendsTableBodyHTML = `<tbody class="bg-white divide-y divide-gray-200">`; 
         
         const periods = ['nextDay', 'nextWeek', 'nextMonth'];
-        const periodNames = {'nextDay': 'Next Day', 'nextWeek': 'Next Week (5 Trading Days)', 'nextMonth': 'Next Month (21 Trading Days)'};
+        const periodNames = {'nextDay': 'Next Day', 'nextWeek': 'Next Week', 'nextMonth': 'Next Month'};
+        
         periods.forEach(periodKey => {
             const trend = result.trends[periodKey];
             const changePercentText = trend.changePercent !== null ? `${(trend.changePercent * 100).toFixed(2)}%` : 'N/A';
@@ -288,9 +469,66 @@ function displayFullResults(analysisResults) {
             const lowText = trend.low !== null && trend.low !== Infinity ? trend.low.toFixed(2) : 'N/A';
             const detailsText = trend.details || 'N/A';
             const rowClass = trend.changePercent === null ? 'text-gray-400' : (trend.changePercent >= 0 ? 'text-green-700' : 'text-red-700');
-            trendsTable.querySelector('tbody').innerHTML += `<tr class="${rowClass}"><td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${periodNames[periodKey]}</td><td class="px-4 py-2 whitespace-nowrap text-sm">${changePercentText}</td><td class="px-4 py-2 whitespace-nowrap text-sm">${highText}</td><td class="px-4 py-2 whitespace-nowrap text-sm">${lowText}</td><td class="px-4 py-2 whitespace-nowrap text-xs">${detailsText} (End: ${trend.endDate || 'N/A'}, Days: ${trend.daysAvailable || 'N/A'})</td></tr>`;
+            
+            trendsTableBodyHTML += `
+                <tr class="${rowClass}">
+                    <td class="px-3 py-2 whitespace-nowrap text-sm font-medium ${rowClass === 'text-gray-400' ? 'text-gray-400' :'text-gray-900'}">${periodNames[periodKey]} (${trend.daysAvailable}d)</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm">${changePercentText}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm">${highText}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm">${lowText}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-xs">${detailsText}</td>
+                </tr>`;
         });
-        stockCard.innerHTML += trendsTable.outerHTML;
+        trendsTableBodyHTML += `</tbody>`;
+        trendsTable.innerHTML = `<thead class="bg-gray-50"><tr>
+                                <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period</th>
+                                <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">% Change</th>
+                                <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">High</th>
+                                <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Low</th>
+                                <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
+                             </tr></thead>` + trendsTableBodyHTML;
+        stockCard.appendChild(trendsTable);
+
+        // Title for Technical Indicators Table
+        const indicatorsTitle = document.createElement('h4');
+        indicatorsTitle.className = "text-lg font-semibold text-gray-700 mt-4 mb-2";
+        indicatorsTitle.textContent = "Technical Indicators at Period End:";
+        stockCard.appendChild(indicatorsTitle);
+
+        // Table for Technical Indicators
+        const indicatorsTable = document.createElement('table');
+        indicatorsTable.className = 'min-w-full divide-y divide-gray-200 mb-4';
+        let indicatorsTableBodyHTML = `<tbody class="bg-white divide-y divide-gray-200">`;
+
+        periods.forEach(periodKey => {
+            const trend = result.trends[periodKey];
+            const volatilityText = trend.volatility !== null && !isNaN(trend.volatility) ? `${(trend.volatility * 100).toFixed(2)}%` : 'N/A';
+            const rsiText = trend.rsi !== null && !isNaN(trend.rsi) ? trend.rsi.toFixed(2) : 'N/A';
+            let maText = 'N/A';
+            if (trend.maCrossover) {
+                if (trend.maCrossover.status === "Golden" || trend.maCrossover.status === "Death" || trend.maCrossover.status === "Neutral") {
+                     maText = `${trend.maCrossover.status} (S:${trend.maCrossover.shortMA !== null ? trend.maCrossover.shortMA.toFixed(2) : 'N/A'}, L:${trend.maCrossover.longMA !== null ? trend.maCrossover.longMA.toFixed(2) : 'N/A'})`;
+                } else {
+                    maText = trend.maCrossover.status; 
+                }
+            }
+
+            indicatorsTableBodyHTML += `<tr>
+                                     <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${periodNames[periodKey]} (${trend.daysAvailable}d)</td>
+                                     <td class="px-3 py-2 whitespace-nowrap text-sm">${volatilityText}</td>
+                                     <td class="px-3 py-2 whitespace-nowrap text-sm">${rsiText}</td>
+                                     <td class="px-3 py-2 whitespace-nowrap text-sm">${maText}</td>
+                                   </tr>`;
+        });
+        indicatorsTableBodyHTML += `</tbody>`;
+        indicatorsTable.innerHTML = `<thead class="bg-gray-50"><tr>
+                                     <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period</th>
+                                     <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Volatility</th>
+                                     <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">RSI (14)</th>
+                                     <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">MA (10/20)</th>
+                                   </tr></thead>` + indicatorsTableBodyHTML;
+        stockCard.appendChild(indicatorsTable);
+
 
         const chartCanvasId = `chart-${result.symbol.replace(/[^a-zA-Z0-9]/g, '')}-${result.date.replace(/[^a-zA-Z0-9]/g, '')}`;
         const chartDiv = document.createElement('div');
@@ -299,7 +537,7 @@ function displayFullResults(analysisResults) {
         stockCard.appendChild(chartDiv);
 
         if (result.historicalDataArray && result.historicalDataArray.length > 0) {
-            setTimeout(() => { // Ensure DOM is updated before rendering
+            setTimeout(() => { 
                 renderStockChart(chartCanvasId, result.historicalDataArray, result.date, result.symbol);
             }, 0);
         } else {

@@ -43,57 +43,90 @@ async function fetchStockData(symbol, apiKey) {
     }
 }
 
-// Example of how you might export if you were using modules (not strictly necessary for this setup yet)
-// if (typeof module !== 'undefined' && module.exports) {
-//     module.exports = { fetchStockData };
-// }
-
 async function fetchStockDataFMP(symbol, apiKey) {
-    // FMP endpoint for full daily historical prices (includes open, high, low, close, volume)
-    // The API docs suggest "historical-price-full" for daily data.
-    // Example: https://financialmodelingprep.com/api/v3/historical-price-full/AAPL?apikey=YOUR_API_KEY
+    const cacheKey = `fmp_data_${symbol.toUpperCase()}`;
+    const cacheExpiry = 120 * 60 * 60 * 1000; // 120 hours in milliseconds
+
+    // 1. Try to retrieve from localStorage
+    try {
+        const cachedItem = localStorage.getItem(cacheKey);
+        if (cachedItem) {
+            const { timestamp, data: cachedData } = JSON.parse(cachedItem);
+            if ((Date.now() - timestamp) < cacheExpiry) {
+                console.log(`Using cached data for ${symbol}`);
+                // Ensure the cached data is in the expected array format
+                if (Array.isArray(cachedData)) {
+                    return cachedData;
+                } else {
+                    // This might happen if a previous version stored data differently or if cache is corrupted.
+                    console.warn(`Cached data for ${symbol} is not in expected array format. Refetching.`);
+                    localStorage.removeItem(cacheKey); // Remove corrupted cache
+                }
+            } else {
+                console.log(`Cached data for ${symbol} is stale. Refetching.`);
+                localStorage.removeItem(cacheKey); // Remove stale cache
+            }
+        }
+    } catch (error) {
+        console.error(`Error reading from localStorage for ${symbol}:`, error);
+        // Proceed to fetch if cache read fails
+    }
+
+    // 2. If no fresh cache, fetch from API
     const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${symbol.toUpperCase()}?apikey=${apiKey}`;
 
     try {
+        console.log(`Fetching fresh data from FMP API for ${symbol}`);
         const response = await fetch(url);
         if (!response.ok) {
             const errorData = await response.json().catch(() => null);
             if (errorData && errorData['Error Message']) {
                 throw new Error(`FMP API error for ${symbol}: ${errorData['Error Message']}`);
             }
-            // FMP might also return errors in a different structure or just a status code
             throw new Error(`Network response was not ok for FMP API for ${symbol}: ${response.statusText} (status: ${response.status})`);
         }
         const data = await response.json();
 
-        // FMP specific error checking (their error messages might be in a 'message' or 'Error Message' field)
-        // Or sometimes, an empty array/object is returned for an invalid symbol with a 200 OK.
         if (data['Error Message']) {
             throw new Error(`FMP API error for ${symbol}: ${data['Error Message']}`);
         }
         
         // Check if data.historical is present and is an array
+        // Note: The specific check `if (data.symbol && Object.keys(data).length === 1)` from the prompt
+        // is a bit more specific than the previous implementation.
+        // The previous implementation was `if (data.symbol && data.historical && Array.isArray(data.historical) && data.historical.length === 0)`
+        // And then a separate `if (Object.keys(data).length === 0)`.
+        // The prompt's condition `if (data.symbol && Object.keys(data).length === 1)` aims to catch cases like `{ "symbol" : "QQQQQ" }` (no historical array)
+        // This is subtly different from `{ "symbol" : "QQQQQ", "historical" : [] }`
         if (!data.historical || !Array.isArray(data.historical)) {
-            // FMP for an invalid symbol like "QQQQQ" often returns: { "symbol" : "QQQQQ", "historical" : [ ] }
-            // So, check if historical is an empty array and symbol key exists
-            if (data.symbol && data.historical && Array.isArray(data.historical) && data.historical.length === 0) {
+            if (data.symbol && data.historical && Array.isArray(data.historical) && data.historical.length === 0) { // Handles {symbol: "SYM", historical: []}
                  throw new Error(`No historical data found for symbol ${symbol} from FMP (empty 'historical' array). It might be an invalid symbol or no data available.`);
-            }
-            // For some invalid symbols or issues, FMP might return an empty object
-            if (Object.keys(data).length === 0) {
+            } else if (data.symbol && Object.keys(data).length === 1) { // Handles {symbol: "SYM"}
+                 throw new Error(`No historical data found for symbol ${symbol} from FMP. It might be an invalid symbol or no data available (only symbol key returned).`);
+            } else if (Object.keys(data).length === 0) { // Handles {}
                  throw new Error(`Empty response received for symbol ${symbol} from FMP. Invalid symbol or no data.`);
             }
-            // Log the unusual data structure if it's not an outright error but doesn't contain data.historical
+            // General catch-all for other unexpected structures
             console.warn(`Unexpected data structure for ${symbol} from FMP: `, data);
             throw new Error(`Unexpected data structure received for ${symbol} from FMP (expected 'historical' array).`);
         }
         
-        // The actual daily data is usually in `data.historical` array for this endpoint
-        // FMP data is typically newest first.
-        return data.historical; // This is an array of daily data objects, newest first.
+        const fetchedDataArray = data.historical; // This is an array of daily data objects
+
+        // 3. Store fetched data in localStorage
+        try {
+            const itemToCache = { timestamp: Date.now(), data: fetchedDataArray };
+            localStorage.setItem(cacheKey, JSON.stringify(itemToCache));
+            console.log(`Cached fresh data for ${symbol}`);
+        } catch (error) {
+            console.error(`Error writing to localStorage for ${symbol}:`, error);
+            // Still return fetched data even if caching fails
+        }
+
+        return fetchedDataArray;
 
     } catch (error) {
         console.error(`Failed to fetch stock data from FMP for ${symbol}:`, error);
-        throw error; // Re-throw for the caller
+        throw error; 
     }
 }
